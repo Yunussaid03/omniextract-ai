@@ -1,0 +1,48 @@
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+
+# Python Bytecode & Caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.nox/
+.tox/
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build & Packaging Artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# IDE & Editor Directories
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# Database / Local Storage Data
+*.sqlite
+*.sqlite3
+postgres_data/
+
+# Logs
+*.log
+logs/
