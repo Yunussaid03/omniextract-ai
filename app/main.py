@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api.routes.health import router as health_router
+from app.api.routes import documents_router, health_router, jobs_router
 from app.core.config import settings
 
 app = FastAPI(
@@ -12,6 +12,8 @@ app = FastAPI(
 )
 
 app.include_router(health_router)
+app.include_router(documents_router)
+app.include_router(jobs_router)
 
 
 if __name__ == "__main__":

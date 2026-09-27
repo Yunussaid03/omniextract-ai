@@ -4,57 +4,41 @@ OmniExtract AI is an enterprise-grade multimodal document ingestion and structur
 
 ---
 
-## Current Status
+## Current Architecture
 
-> [!NOTE]
-> This repository is currently in its **Initial Foundation Phase**.
-
-The present codebase establishes the project foundation, environment configuration, database session setup, containerization, and test scaffolding. Application domain models, asynchronous background workers, and AI extraction pipelines have not yet been implemented and will be designed systematically.
-
----
-
-## Planned Architecture
-
-When fully realized, OmniExtract AI will feature an end-to-end extraction and validation pipeline:
+OmniExtract AI implements a durable, asynchronous task queue architecture built directly on PostgreSQL:
 
 ```
-[ Incoming API Request / Document ]
-               │
-               ▼
-   ┌──────────────────────┐
-   │   FastAPI Service    │
-   └───────────┬──────────┘
-               │
-               ▼
-   ┌──────────────────────┐
-   │ Document Preprocess  │  <-- PyMuPDF / Pillow page rendering & normalization
-   └───────────┬──────────┘
-               │
-               ▼
-   ┌──────────────────────┐
-   │  Multimodal LLM      │  <-- Vision & document representations
-   └───────────┬──────────┘
-               │
-               ▼
-   ┌──────────────────────┐
-   │  Pydantic Validation │  <-- Strict schema parsing & structured output
-   └───────────┬──────────┘
-               │
-               ▼
-   ┌──────────────────────┐
-   │ Business Rules Check │  <-- Deterministic financial/business validation
-   └───────────┬──────────┘
-               │
-               ▼
-   ┌──────────────────────┐
-   │ PostgreSQL Database  │  <-- Persistence of extraction, state, & audit logs
-   └──────────────────────┘
+  ┌─────────────────┐
+  │ FastAPI Service │
+  └────────┬────────┘
+           │
+           │ 1. POST /documents/upload -> Inserts QUEUED job & returns HTTP 202 Accepted
+           ▼
+  ┌────────────────────────────────────────────────────────┐
+  │ PostgreSQL Database (processing_jobs table)            │
+  └────────┬───────────────────────────────────────────────┘
+           │
+           │ 2. Worker polls & claims job via SELECT ... FOR UPDATE SKIP LOCKED
+           ▼
+  ┌─────────────────┐
+  │ Polling Worker  │  <-- Updates status to PROCESSING in a short transaction
+  └─────────────────┘
 ```
 
-Future capabilities will also include:
-- **Asynchronous processing & message queues**
-- **Idempotent processing & retries**
-- **Auditability & Observability (tracing, metrics, structured logs)**
+### Core Architecture Concepts Explained
+
+- **What is the Queue?**
+  The queue is a durable table in PostgreSQL (`processing_jobs`) where each document upload creates a job record with status `QUEUED`. Instead of processing heavy document extractions synchronously inside the web request, FastAPI quickly saves a job record and returns `202 Accepted` with a `job_id`.
+
+- **What is the Worker?**
+  The worker is an independent Python background process (`app/worker.py`) that continuously polls PostgreSQL for `QUEUED` jobs. Once a job is found, the worker updates its status to `PROCESSING` and records its `started_at` timestamp before proceeding with document tasks.
+
+- **Why PostgreSQL as the Queue?**
+  Using PostgreSQL as the job queue eliminates the complexity of introducing external message brokers (like Redis, RabbitMQ, or Celery) during early architecture phases. It provides ACID guarantees, transaction safety, simplified operations, and zero extra infrastructure overhead.
+
+- **Why is `SKIP LOCKED` Important?**
+  When multiple worker processes run concurrently, `SELECT ... FOR UPDATE SKIP LOCKED` allows each worker to lock and claim a queued job row without blocking or conflicting with other workers. If Worker A locks Job 1, Worker B automatically skips Job 1 and claims Job 2 simultaneously without lock contention or duplicate processing.
 
 ---
 
@@ -67,7 +51,7 @@ Future capabilities will also include:
 - **Database Migrations:** Alembic
 - **Document Processing:** PyMuPDF (`fitz`), Pillow (`PIL`)
 - **Containerization:** Docker & Docker Compose
-- **Testing:** pytest, `httpx`
+- **Testing:** pytest, `httpx`, `aiosqlite`
 
 ---
 
@@ -106,38 +90,55 @@ Run tests:
 pytest
 ```
 
+Run database migrations:
+```bash
+alembic upgrade head
+```
+
 Run local API server:
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-### 4. Running with Docker Compose
-
-Start the API and PostgreSQL containers:
+Run standalone background worker:
 ```bash
-docker compose up --build
+python -m app.worker
+# Or run a single pass and exit:
+python -m app.worker --once
 ```
 
-Access services:
-- **API Health Check:** `http://localhost:8000/health`
+### 4. Endpoints & API Usage
+
+- **Upload Document (Initiate Job):**
+  ```bash
+  curl -X POST "http://localhost:8000/documents/upload" \
+    -F "file=@sample_invoice.pdf"
+  ```
+  *Response (HTTP 202 Accepted):*
+  ```json
+  {
+    "job_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "status": "QUEUED",
+    "created_at": "2026-09-27T14:20:00Z"
+  }
+  ```
+
+- **Query Job Status:**
+  ```bash
+  curl -X GET "http://localhost:8000/jobs/3fa85f64-5717-4562-b3fc-2c963f66afa6"
+  ```
+  *Response (HTTP 200 OK):*
+  ```json
+  {
+    "job_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "status": "PROCESSING",
+    "created_at": "2026-09-27T14:20:00Z",
+    "started_at": "2026-09-27T14:20:01Z"
+  }
+  ```
+
 - **Swagger Documentation:** `http://localhost:8000/docs`
 - **OpenAPI Schema:** `http://localhost:8000/openapi.json`
-- **PostgreSQL Database:** `localhost:5432`
-
----
-
-## Architecture Decision Log
-
-Major architectural decisions will be formally evaluated and logged prior to implementation. Upcoming design decisions include:
-
-1. **Synchronous vs. Asynchronous Processing Strategy**
-2. **Task Queue & Worker Mechanism** (e.g. Celery / ARQ / Redis / RabbitMQ)
-3. **Document Object Storage Architecture** (e.g. S3 / MinIO / Local Blob)
-4. **Database Domain Model & Schema Design**
-5. **Extraction Schemas & Multimodal Prompt Engineering**
-6. **Business & Financial Validation Strategy**
-7. **Retry Policies & Idempotency Controls**
-8. **Observability, Tracing, and Logging Standards**
 
 ---
 
