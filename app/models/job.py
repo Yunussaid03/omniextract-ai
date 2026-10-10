@@ -14,6 +14,8 @@ class JobStatus(str, enum.Enum):
 
     QUEUED = "QUEUED"
     PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 
 class ProcessingJob(Base):
@@ -43,5 +45,13 @@ class ProcessingJob(Base):
     )
     started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
+        nullable=True,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    error_message: Mapped[str | None] = mapped_column(
+        String(500),
         nullable=True,
     )

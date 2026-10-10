@@ -20,7 +20,7 @@ async def get_job_status(
     job_id: UUID,
     db: AsyncSession = Depends(get_db),
 ) -> JobResponse:
-    """Retrieves processing job status, created_at, and started_at timestamps."""
+    """Retrieves processing job status, created_at, started_at, and completed_at timestamps."""
     job = await get_job_by_id(db, job_id)
     if not job:
         raise HTTPException(
@@ -33,4 +33,6 @@ async def get_job_status(
         status=job.status,
         created_at=job.created_at,
         started_at=job.started_at,
+        completed_at=job.completed_at,
+        error_message=job.error_message,
     )

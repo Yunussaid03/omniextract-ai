@@ -25,5 +25,11 @@ class JobResponse(BaseModel):
     started_at: datetime | None = Field(
         None, description="Timestamp when worker claimed job for processing"
     )
+    completed_at: datetime | None = Field(
+        None, description="Timestamp when job finished processing or failed"
+    )
+    error_message: str | None = Field(
+        None, description="Error message description if job status is FAILED"
+    )
 
     model_config = ConfigDict(from_attributes=True)
