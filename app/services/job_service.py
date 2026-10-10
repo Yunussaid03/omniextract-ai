@@ -3,7 +3,9 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from app.models.document import Document
 from app.models.job import JobStatus, ProcessingJob
 
 
@@ -21,11 +23,42 @@ async def create_job(
     return job
 
 
+async def create_job_with_document(
+    db: AsyncSession,
+    original_filename: str,
+    storage_path: str,
+    content_type: str,
+    file_size: int,
+) -> tuple[ProcessingJob, Document]:
+    """Creates a QUEUED job and linked Document metadata record in a single transaction."""
+    job = ProcessingJob(
+        status=JobStatus.QUEUED,
+        filename=original_filename,
+    )
+    document = Document(
+        job=job,
+        original_filename=original_filename,
+        storage_path=storage_path,
+        content_type=content_type,
+        file_size=file_size,
+    )
+    db.add(job)
+    db.add(document)
+    await db.commit()
+    await db.refresh(job)
+    await db.refresh(document)
+    return job, document
+
+
 async def get_job_by_id(
     db: AsyncSession, job_id: UUID
 ) -> ProcessingJob | None:
-    """Retrieves a processing job by its UUID."""
-    stmt = select(ProcessingJob).where(ProcessingJob.id == job_id)
+    """Retrieves a processing job by its UUID, including linked document relationship."""
+    stmt = (
+        select(ProcessingJob)
+        .options(selectinload(ProcessingJob.document))
+        .where(ProcessingJob.id == job_id)
+    )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
 

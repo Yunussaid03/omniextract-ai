@@ -1,12 +1,16 @@
 from datetime import datetime, timezone
 import enum
+from typing import TYPE_CHECKING
 import uuid
 
 from sqlalchemy import DateTime, Enum, String
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
+
+if TYPE_CHECKING:
+    from app.models.document import Document
 
 
 class JobStatus(str, enum.Enum):
@@ -54,4 +58,11 @@ class ProcessingJob(Base):
     error_message: Mapped[str | None] = mapped_column(
         String(500),
         nullable=True,
+    )
+
+    document: Mapped["Document | None"] = relationship(
+        "Document",
+        back_populates="job",
+        uselist=False,
+        cascade="all, delete-orphan",
     )

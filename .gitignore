@@ -3,6 +3,10 @@
 .env.*
 !.env.example
 
+# Document Storage Artifacts
+storage/documents/*
+!storage/documents/.gitkeep
+
 # Python Bytecode & Caches
 __pycache__/
 *.py[cod]

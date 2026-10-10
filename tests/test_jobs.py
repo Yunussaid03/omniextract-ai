@@ -5,18 +5,25 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
+import app.models  # Ensure all models are registered with Base.metadata
 from app.api.routes.jobs import get_db
 from app.db.session import Base
 from app.main import app
-from app.models.job import JobStatus, ProcessingJob
+from app.models import Document, JobStatus, ProcessingJob
 from app.services.job_service import create_job, get_job_by_id, mark_job_completed, mark_job_failed
 from app.worker import claim_next_job
 
-# SQLite in-memory engine for unit testing
+# SQLite in-memory engine for unit testing using StaticPool
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
-test_engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+test_engine = create_async_engine(
+    TEST_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+    echo=False,
+)
 TestingSessionLocal = async_sessionmaker(
     bind=test_engine,
     class_=AsyncSession,
@@ -28,21 +35,21 @@ TestingSessionLocal = async_sessionmaker(
 
 @pytest.fixture(autouse=True)
 async def setup_test_db() -> AsyncGenerator[None, None]:
-    """Creates database tables in in-memory database for each test."""
+    """Creates database tables and overrides get_db dependency for each test."""
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+        async with TestingSessionLocal() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+
     yield
+
+    app.dependency_overrides.clear()
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
-
-
-async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
-    """Dependency override providing test database session."""
-    async with TestingSessionLocal() as session:
-        yield session
-
-
-app.dependency_overrides[get_db] = override_get_db
 
 
 @pytest.mark.asyncio
@@ -109,7 +116,7 @@ async def test_upload_document_endpoint_whitespace_filename() -> None:
     """Verify uploading a file with whitespace filename returns HTTP 400 Bad Request."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        files = {"file": ("   ", b"some data", "text/plain")}
+        files = {"file": ("   ", b"%PDF-1.4 dummy content", "application/pdf")}
         response = await client.post("/documents/upload", files=files)
 
     assert response.status_code == 400
