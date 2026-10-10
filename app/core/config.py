@@ -6,9 +6,13 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "OmniExtract AI"
     APP_ENV: str = "development"
-    
+
     # Database Settings
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/omniextract_db"
+
+    # Document Storage Settings
+    STORAGE_DIR: str = "storage/documents"
+    MAX_UPLOAD_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MB limit
 
     # OpenAI Multimodal Integration Settings (Placeholders for future use)
     OPENAI_API_KEY: str = ""
