@@ -10,7 +10,7 @@ from app.api.routes.jobs import get_db
 from app.db.session import Base
 from app.main import app
 from app.models.job import JobStatus, ProcessingJob
-from app.services.job_service import create_job, get_job_by_id
+from app.services.job_service import create_job, get_job_by_id, mark_job_completed, mark_job_failed
 from app.worker import claim_next_job
 
 # SQLite in-memory engine for unit testing
@@ -56,6 +56,37 @@ async def test_job_service_create_job() -> None:
         assert job.filename == "test_receipt.pdf"
         assert job.created_at is not None
         assert job.started_at is None
+        assert job.completed_at is None
+        assert job.error_message is None
+
+
+@pytest.mark.asyncio
+async def test_mark_job_completed() -> None:
+    """Verify mark_job_completed transitions job to COMPLETED with timestamp."""
+    async with TestingSessionLocal() as session:
+        job = await create_job(session, filename="invoice.pdf")
+        job_id = job.id
+
+    async with TestingSessionLocal() as session:
+        completed_job = await mark_job_completed(session, job_id)
+        assert completed_job is not None
+        assert completed_job.status == JobStatus.COMPLETED
+        assert completed_job.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_mark_job_failed() -> None:
+    """Verify mark_job_failed transitions job to FAILED with error message and timestamp."""
+    async with TestingSessionLocal() as session:
+        job = await create_job(session, filename="corrupt.pdf")
+        job_id = job.id
+
+    async with TestingSessionLocal() as session:
+        failed_job = await mark_job_failed(session, job_id, error_message="Invalid PDF structure")
+        assert failed_job is not None
+        assert failed_job.status == JobStatus.FAILED
+        assert failed_job.completed_at is not None
+        assert failed_job.error_message == "Invalid PDF structure"
 
 
 @pytest.mark.asyncio
@@ -87,7 +118,7 @@ async def test_upload_document_endpoint_whitespace_filename() -> None:
 
 @pytest.mark.asyncio
 async def test_get_job_status_endpoint() -> None:
-    """Verify GET /jobs/{job_id} returns job details."""
+    """Verify GET /jobs/{job_id} returns job details including completed_at and error_message."""
     async with TestingSessionLocal() as session:
         job = await create_job(session, filename="waybill.pdf")
         job_id = str(job.id)
@@ -101,6 +132,8 @@ async def test_get_job_status_endpoint() -> None:
     assert data["job_id"] == job_id
     assert data["status"] == "QUEUED"
     assert data["started_at"] is None
+    assert data["completed_at"] is None
+    assert data["error_message"] is None
 
 
 @pytest.mark.asyncio
