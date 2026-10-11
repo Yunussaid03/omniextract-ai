@@ -1,10 +1,9 @@
 import os
-from typing import AsyncGenerator
 import uuid
+from collections.abc import AsyncGenerator
 
-from fastapi.testclient import TestClient
-from httpx import ASGITransport, AsyncClient
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -13,10 +12,9 @@ from app.api.routes.jobs import get_db
 from app.core.config import settings
 from app.db.session import Base
 from app.main import app
-from app.models.document import Document
-from app.models.job import JobStatus, ProcessingJob
-from app.services.job_service import create_job_with_document, get_job_by_id
-from app.services.storage_service import delete_stored_file, detect_content_type
+from app.models.job import JobStatus
+from app.services.job_service import get_job_by_id
+from app.services.storage_service import detect_content_type
 
 # SQLite in-memory engine for unit testing using StaticPool
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
