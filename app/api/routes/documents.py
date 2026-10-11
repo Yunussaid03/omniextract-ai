@@ -23,7 +23,7 @@ async def upload_document(
     storage_path, content_type, file_size = await save_uploaded_file(file)
 
     try:
-        job, document = await create_job_with_document(
+        job, _document = await create_job_with_document(
             db=db,
             original_filename=file.filename or "document",
             storage_path=storage_path,

@@ -6,24 +6,40 @@ OmniExtract AI is an enterprise-grade multimodal document ingestion and structur
 
 ## Current Architecture
 
-OmniExtract AI implements a durable, asynchronous task queue architecture built directly on PostgreSQL:
+OmniExtract AI implements a durable, asynchronous task queue and document parsing architecture built on PostgreSQL:
 
 ```
   ┌─────────────────┐
   │ FastAPI Service │
   └────────┬────────┘
            │
-           │ 1. POST /documents/upload -> Inserts QUEUED job & returns HTTP 202 Accepted
+           │ 1. POST /documents/upload
+           │    - Validates file magic bytes (PDF, PNG, JPEG) & max size limit
+           │    - Saves file with secure UUID filename to persistent storage
+           │    - Inserts Document & QUEUED ProcessingJob in PostgreSQL
            ▼
   ┌────────────────────────────────────────────────────────┐
-  │ PostgreSQL Database (processing_jobs table)            │
+  │ PostgreSQL Database (processing_jobs, documents)       │
   └────────┬───────────────────────────────────────────────┘
            │
-           │ 2. Worker polls & claims job via SELECT ... FOR UPDATE SKIP LOCKED
+           │ 2. Polling Worker claims job via SELECT ... FOR UPDATE SKIP LOCKED
+           │    - Updates job status to PROCESSING in a short transaction
+           │    - Releases database transaction immediately
            ▼
   ┌─────────────────┐
-  │ Polling Worker  │  <-- Updates status to PROCESSING in a short transaction
-  └─────────────────┘
+  │ Polling Worker  │
+  └────────┬────────┘
+           │
+           │ 3. Document Parsing (Outside active DB transaction)
+           │    - PDF: PyMuPDF extracts text page by page; flags textless PDFs (requires_ocr=True)
+           │    - Images (PNG, JPEG): Pillow validates image decoding and inspects dimensions/mode
+           │    - Sanitized error handling for corrupted or invalid documents
+           ▼
+  ┌────────────────────────────────────────────────────────┐
+  │ PostgreSQL Database (parsed_documents table)           │
+  │    - Persists raw text, per-page structured JSON, and metadata
+  │    - Transitions job to COMPLETED (or FAILED on error)
+  └────────────────────────────────────────────────────────┘
 ```
 
 ### Core Architecture Concepts Explained
@@ -32,10 +48,12 @@ OmniExtract AI implements a durable, asynchronous task queue architecture built 
   The queue is a durable table in PostgreSQL (`processing_jobs`) where each document upload creates a job record with status `QUEUED`. Instead of processing heavy document extractions synchronously inside the web request, FastAPI quickly saves a job record and returns `202 Accepted` with a `job_id`.
 
 - **What is the Worker?**
-  The worker is an independent Python background process (`app/worker.py`) that continuously polls PostgreSQL for `QUEUED` jobs. Once a job is found, the worker updates its status to `PROCESSING` and records its `started_at` timestamp before proceeding with document tasks.
+  The worker is an independent Python background process (`app/worker.py`) that continuously polls PostgreSQL for `QUEUED` jobs. Once a job is claimed, the worker retrieves document storage metadata, parses the document content without holding a database transaction open, persists structured parsing results, and marks the job `COMPLETED`.
 
-- **Why PostgreSQL as the Queue?**
-  Using PostgreSQL as the job queue eliminates the complexity of introducing external message brokers (like Redis, RabbitMQ, or Celery) during early architecture phases. It provides ACID guarantees, transaction safety, simplified operations, and zero extra infrastructure overhead.
+- **How Documents are Parsed:**
+  - **PDF Documents:** Parsed page-by-page using PyMuPDF. Page text, character counts, and page boundaries are preserved. If a PDF contains no extractable text, it is cleanly flagged with `requires_ocr = True` for subsequent OCR pipelines without falsely claiming OCR has occurred.
+  - **PNG and JPEG Images:** Inspected and fully decoded using Pillow to verify image validity and extract dimensions (`width`, `height`), color mode, and format.
+  - **Error Diagnostics:** Corrupted PDFs, broken images, or missing files are safely trapped, and the job transitions to `FAILED` with sanitized diagnostics that avoid leaking server filesystem paths.
 
 - **Why is `SKIP LOCKED` Important?**
   When multiple worker processes run concurrently, `SELECT ... FOR UPDATE SKIP LOCKED` allows each worker to lock and claim a queued job row without blocking or conflicting with other workers. If Worker A locks Job 1, Worker B automatically skips Job 1 and claims Job 2 simultaneously without lock contention or duplicate processing.
@@ -49,9 +67,9 @@ OmniExtract AI implements a durable, asynchronous task queue architecture built 
 - **Data Validation & Settings:** Pydantic v2 & Pydantic Settings
 - **Database & ORM:** PostgreSQL, SQLAlchemy 2.0 (async), `asyncpg`
 - **Database Migrations:** Alembic
-- **Document Processing:** PyMuPDF (`fitz`), Pillow (`PIL`)
+- **Document Processing:** PyMuPDF (`pymupdf`), Pillow (`PIL`)
 - **Containerization:** Docker & Docker Compose
-- **Testing:** pytest, `httpx`, `aiosqlite`
+- **Testing & Quality:** pytest, `httpx`, `aiosqlite`, `ruff`
 
 ---
 
@@ -85,9 +103,13 @@ Install dependencies:
 pip install -e ".[dev]"
 ```
 
-Run tests:
+Run tests and linter:
 ```bash
+# Run pytest test suite:
 pytest
+
+# Run ruff code linter:
+ruff check .
 ```
 
 Run database migrations:
@@ -119,21 +141,41 @@ python -m app.worker --once
   {
     "job_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
     "status": "QUEUED",
-    "created_at": "2026-09-27T14:20:00Z"
+    "created_at": "2026-10-11T19:20:00Z"
   }
   ```
 
-- **Query Job Status:**
+- **Query Job Status & Parsed Results:**
   ```bash
   curl -X GET "http://localhost:8000/jobs/3fa85f64-5717-4562-b3fc-2c963f66afa6"
   ```
-  *Response (HTTP 200 OK):*
+  *Response (HTTP 200 OK after worker completes):*
   ```json
   {
     "job_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-    "status": "PROCESSING",
-    "created_at": "2026-09-27T14:20:00Z",
-    "started_at": "2026-09-27T14:20:01Z"
+    "status": "COMPLETED",
+    "created_at": "2026-10-11T19:20:00Z",
+    "started_at": "2026-10-11T19:20:01Z",
+    "completed_at": "2026-10-11T19:20:02Z",
+    "error_message": null,
+    "parsed_document": {
+      "raw_text": "Invoice #1001...",
+      "pages": [
+        {
+          "page_number": 1,
+          "text": "Invoice #1001...",
+          "char_count": 450
+        }
+      ],
+      "page_count": 1,
+      "requires_ocr": false,
+      "metadata_json": {
+        "format": "PDF",
+        "page_count": 1,
+        "title": null,
+        "author": null
+      }
+    }
   }
   ```
 

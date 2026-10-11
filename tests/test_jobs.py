@@ -1,9 +1,8 @@
 import uuid
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
-from fastapi.testclient import TestClient
-from httpx import ASGITransport, AsyncClient
 import pytest
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -11,8 +10,12 @@ import app.models  # Ensure all models are registered with Base.metadata
 from app.api.routes.jobs import get_db
 from app.db.session import Base
 from app.main import app
-from app.models import Document, JobStatus, ProcessingJob
-from app.services.job_service import create_job, get_job_by_id, mark_job_completed, mark_job_failed
+from app.models import JobStatus
+from app.services.job_service import (
+    create_job,
+    mark_job_completed,
+    mark_job_failed,
+)
 from app.worker import claim_next_job
 
 # SQLite in-memory engine for unit testing using StaticPool
